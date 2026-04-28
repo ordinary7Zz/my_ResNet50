@@ -1,0 +1,117 @@
+当前项目运行说明
+
+一、进入项目目录
+cd /d/workspace/ThyroidAgent/Classification_Models/my_ResNet50
+
+二、训练 + 测试
+当前训练入口文件：run_resnet50_train_test.sh
+
+先修改这个文件里的数据路径和训练参数：
+- DATA_ROOT
+- TRAIN_IMAGE_DIR
+- TRAIN_LABEL_JSON
+- TEST_IMAGE_DIRS
+- TEST_LABEL_JSONS
+- TEST_DATASET_NAMES
+- EPOCHS
+- BATCH_SIZE
+- LR
+- IMG_SIZE
+- CUDA_DEVICE
+- DATASET_NAME
+
+然后运行：
+bash run_resnet50_train_test.sh
+
+训练输出：
+- 日志目录：logs_resnet50/<dataset_name>/<timestamp>/
+- 权重目录：checkpoints_resnet50/<dataset_name>/<timestamp>/
+
+三、单独推理
+当前推理入口文件：infer_resnet50_cls.py
+
+功能：
+- 根据已训练好的 .pth 权重文件做推理
+- 根据 image_dir + filename 拼接图像路径
+- 根据 task_key 读取对应二分类标签
+- 标签值为 -1 的样本自动跳过
+- 保存逐样本预测结果
+- 保存分类指标和置信区间
+
+运行命令示例：
+python infer_resnet50_cls.py \
+  --image_dir "/path/to/images" \
+  --label_json "/path/to/test_labels.json" \
+  --task_key "LNM_CN01" \
+  --checkpoint_path "/path/to/resnet50_model.pth" \
+  --output_dir "/path/to/output_dir"
+
+可选参数：
+- --img_size 224
+- --batch_size 32
+- --cuda_device 0
+- --threshold 0.5
+- --num_workers 8
+- --n_boot 2000
+- --ci 0.95
+
+推理输出：
+- predictions.csv
+  字段：filename,label,logit,prob,pred
+- metrics_summary.json
+  包含：
+  - accuracy
+  - precision
+  - recall
+  - f1
+  - auroc
+  - auprc
+  - sensitivity
+  - specificity
+  - youden
+  以及每个指标的 mean 和 ci
+
+四、标签文件格式
+示例：
+[
+  {
+    "filename": "2023/万梅/万梅_01_0003_0003.jpg",
+    "LNM_CN01": 0,
+    "FTCPTC": 0
+  }
+]
+
+说明：
+- filename 是相对路径
+- task_key 取具体任务名，例如 LNM_CN01 或 FTCPTC
+- 对应标签值只能是 0、1、-1
+- -1 表示该样本在该任务下无标签，推理时自动跳过
+
+五、常用示例
+1. 训练
+bash run_resnet50_train_test.sh
+
+2. 对 LNM_CN01 做推理
+python infer_resnet50_cls.py \
+  --image_dir "/path/to/images" \
+  --label_json "test_labels.json" \
+  --task_key "LNM_CN01" \
+  --checkpoint_path "/path/to/checkpoints_resnet50/xxx/resnet50_xxx_epoch_50.pth" \
+  --output_dir "./infer/lnm_cn01"
+
+3. 对 FTCPTC 做推理
+python infer_resnet50_cls.py \
+  --image_dir "/path/to/images" \
+  --label_json "test_labels.json" \
+  --task_key "FTCPTC" \
+  --checkpoint_path "/path/to/checkpoints_resnet50/xxx/resnet50_xxx_epoch_50.pth" \
+  --output_dir "./infer/ftcptc"
+
+DATASET_NAME="TN3K"
+4. 对其他良恶性数据集做推理
+python infer_resnet50_cls.py \
+  --image_dir "/mnt/wangbd8/workspace/DataSets/ThyroidAgent/train_val_test/${DATASET_NAME}/test/images" \
+  --label_json "/mnt/wangbd8/workspace/DataSets/ThyroidAgent/train_val_test/${DATASET_NAME}/test/${DATASET_NAME}_test_label.json" \
+  --task_key "malignancy" \
+  --checkpoint_path "/mnt/wangbd8/workspace/ThyroidAgent/dino_unet_multitask/resnet50/checkpoints_resnet50/resnet50_thyroid_cls_resnet50_epoch_50.pth" \
+  --output_dir "./infer/${DATASET_NAME}"

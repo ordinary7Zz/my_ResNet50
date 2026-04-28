@@ -1,6 +1,6 @@
 import os
 import json
-from typing import List, Dict, Tuple
+from typing import Any, Dict, List, Tuple
 
 from PIL import Image
 import torch
@@ -8,74 +8,32 @@ from torch.utils.data import Dataset
 from torchvision import transforms
 
 
-_IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".PNG", ".JPG", ".JPEG")
-
-
-def _list_images(image_dir: str) -> List[str]:
-    files: List[str] = []
-    for name in os.listdir(image_dir):
-        if name.endswith(_IMAGE_EXTS):
-            files.append(os.path.join(image_dir, name))
-    return sorted(files)
-
-
-def _load_label_mapping(label_json_path: str) -> Dict[str, int]:
-    """Load malignancy labels from the shared JSON format.
-
-    Expected JSON format is a list of dicts:
-    [
-        {"filename": "xxx.png", "malignancy": 0 or 1, "tirads": int},
-        ...
-    ]
-    Only the `malignancy` field is used here.
-    """
-    with open(label_json_path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-
-    if not isinstance(data, list):
-        raise ValueError("label_json must be a list of dicts with keys: filename, malignancy, tirads")
-
-    mapping: Dict[str, int] = {}
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        filename = item.get("filename")
-        if not filename:
-            continue
-        malignancy = int(item.get("malignancy", -1))
-        if malignancy == -1:
-            # skip unlabeled samples for pure classification
-            continue
-        mapping[os.path.basename(filename)] = malignancy
-    return mapping
-
-
 class ThyroidClsDataset(Dataset):
-    """Thyroid ultrasound binary classification dataset (benign vs malignant).
-
-    Images are read from `image_dir`, labels are loaded from a JSON file
-    following the same format as used in the multitask pipeline.
-    """
-
-    def __init__(self, image_dir: str, label_json: str, img_size: int = 224, mode: str = "train") -> None:
+    def __init__(
+        self,
+        image_dir: str,
+        label_json: str,
+        img_size: int = 224,
+        mode: str = "train",
+        task_key: str = "malignancy",
+    ) -> None:
         super().__init__()
         self.image_dir = image_dir
-        self.label_map = _load_label_mapping(label_json)
+        self.task_key = task_key
+        samples, skipped_label_minus1, missing_image_files = self._load_samples(
+            image_dir=image_dir,
+            label_json_path=label_json,
+            task_key=task_key,
+        )
+        self.image_paths = [sample[0] for sample in samples]
+        self.labels = [sample[1] for sample in samples]
+        self.filenames = [sample[2] for sample in samples]
+        self.skipped_label_minus1 = skipped_label_minus1
+        self.missing_image_files = missing_image_files
 
-        # only keep images that have a valid malignancy label
-        all_images = _list_images(image_dir)
-        self.images: List[str] = []
-        self.labels: List[int] = []
-        for path in all_images:
-            fname = os.path.basename(path)
-            if fname in self.label_map:
-                self.images.append(path)
-                self.labels.append(self.label_map[fname])
-
-        if len(self.images) == 0:
+        if len(self.image_paths) == 0:
             raise RuntimeError(
-                f"No labeled images found in '{image_dir}'. "
-                f"Make sure filenames in JSON match the image files."
+                f"No labeled images found in '{image_dir}' for task '{task_key}'."
             )
 
         if mode == "train":
@@ -103,23 +61,68 @@ class ThyroidClsDataset(Dataset):
                 ]
             )
 
-    def __len__(self) -> int:
-        return len(self.images)
+    @staticmethod
+    def _load_samples(
+        image_dir: str,
+        label_json_path: str,
+        task_key: str,
+    ) -> Tuple[List[Tuple[str, int, str]], int, int]:
+        with open(label_json_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
 
-    def __getitem__(self, idx: int) -> Dict[str, torch.Tensor]:
-        path = self.images[idx]
+        if not isinstance(data, list):
+            raise ValueError("label_json must be a list of dicts.")
+
+        samples: List[Tuple[str, int, str]] = []
+        skipped_label_minus1 = 0
+        missing_image_files = 0
+        found_task_key = False
+
+        for item in data:
+            if not isinstance(item, dict):
+                continue
+
+            filename = item.get("filename")
+            if not filename:
+                continue
+
+            if task_key in item:
+                found_task_key = True
+
+            label = int(item.get(task_key, -1))
+            if label == -1:
+                skipped_label_minus1 += 1
+                continue
+
+            relative_path = str(filename)
+            image_path = os.path.join(image_dir, os.path.normpath(relative_path))
+            if not os.path.isfile(image_path):
+                missing_image_files += 1
+                continue
+
+            samples.append((image_path, label, relative_path))
+
+        if not found_task_key:
+            raise ValueError(f"Task key '{task_key}' not found in label JSON.")
+
+        return samples, skipped_label_minus1, missing_image_files
+
+    def __len__(self) -> int:
+        return len(self.image_paths)
+
+    def __getitem__(self, idx: int) -> Dict[str, Any]:
+        path = self.image_paths[idx]
         label = self.labels[idx]
+        filename = self.filenames[idx]
 
         with Image.open(path) as img:
             img = img.convert("RGB")
 
         img_t = self.transform(img)
-        # BCEWithLogitsLoss expects float labels for binary classification
         label_t = torch.tensor(float(label), dtype=torch.float32)
 
         return {
             "image": img_t,
             "label": label_t,
-            "filename": os.path.basename(path),
+            "filename": filename,
         }
-

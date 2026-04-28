@@ -3,6 +3,7 @@ checkpoints_resnet50/
 
 # 日志与输出
 logs_resnet50/
+infer/
 
 # Python 缓存
 __pycache__/
