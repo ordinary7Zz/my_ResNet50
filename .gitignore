@@ -1,0 +1,18 @@
+# 大权重目录 🔥
+checkpoints_resnet50/
+
+# 日志与输出
+logs_resnet50/
+
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+
+# 系统 & IDE
+.ipynb_checkpoints/
+.vscode/
+.idea/
+.DS_Store
